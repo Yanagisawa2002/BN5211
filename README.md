@@ -1,5 +1,13 @@
 # ReSurgSAM2: Referring Segment Anything in Surgical Video via Credible Long-term Tracking 
 
+<div align="center">
+
+[![Project Page](https://img.shields.io/badge/Project-Page-blue)](https://heverlaw.github.io/ReSurgSAM2/)
+[![arXiv](https://img.shields.io/badge/arXiv-2505.08581-b31b1b.svg)](https://www.arxiv.org/abs/2505.08581)
+[![YouTube](https://img.shields.io/badge/Video-Demo-red?logo=youtube)](https://youtu.be/z4Ez4TXVQL4)
+
+</div>
+
 Official implementation for ReSurgSAM2, an innovative model that leverages the power of the Segment Anything Model 2 (SAM2), integrating it with credible long-term tracking for real-time surgical video segmentation.
 > [ReSurgSAM2: Referring Segment Anything in Surgical Video via Credible Long-term Tracking ](https://www.arxiv.org/abs/2505.08581)
 
@@ -18,7 +26,19 @@ Surgical scene segmentation is critical in computer-assisted surgery and is vita
 - Operates in real-time at 61.2 FPS, making it practical for clinical applications
 Achieves substantial improvements in accuracy and efficiency compared to existing methods
 
+## Video Demo
+
+<div align="center">
+
+[![ReSurgSAM2 Demo](https://img.youtube.com/vi/z4Ez4TXVQL4/maxresdefault.jpg)](https://youtu.be/z4Ez4TXVQL4)
+
+*Click the image above to watch the full demo on YouTube*
+
+</div>
+
+## Architecture
 ![architecture](./assets/architecture.png)
+<p align="center"><i>Overall architecture of ReSurgSAM2</i></p>
 
 ## Installization
 
