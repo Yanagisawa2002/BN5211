@@ -699,6 +699,7 @@ class SAM2VideoPredictor(SAM2Base):
         middle_processing_count = 0
         for frame_idx in tqdm(processing_order, desc="propagate in video"):
             pred_masks_per_obj = [None] * batch_size
+            attention_maps_per_obj = [None] * batch_size
             # Now each obj has an independent obj_output_dict, which can store its prediction and perform inference independently.
 
             if batch_size == 1 and frame_idx > 100:
@@ -817,6 +818,9 @@ class SAM2VideoPredictor(SAM2Base):
                     "reverse": reverse
                 }
                 pred_masks_per_obj[obj_idx] = pred_masks
+                attention_maps_per_obj[obj_idx] = (
+                    current_out.get("vqa_attention_map") if isinstance(current_out, dict) else None
+                )
 
             # 计时
             if batch_size == 1 and frame_idx > 100:
@@ -833,7 +837,20 @@ class SAM2VideoPredictor(SAM2Base):
             _, video_res_masks = self._get_orig_video_res_output(
                 inference_state, all_pred_masks
             )
-            yield frame_idx, obj_ids, video_res_masks
+            valid_attention_maps = [m for m in attention_maps_per_obj if m is not None]
+            if valid_attention_maps:
+                template_map = valid_attention_maps[0]
+                stacked_attention_maps = []
+                for attn_map in attention_maps_per_obj:
+                    if attn_map is None:
+                        stacked_attention_maps.append(torch.zeros_like(template_map))
+                    else:
+                        stacked_attention_maps.append(attn_map)
+                all_attention_maps = torch.cat(stacked_attention_maps, dim=0)
+            else:
+                all_attention_maps = None
+
+            yield frame_idx, obj_ids, video_res_masks, all_attention_maps
 
         if middle_processing_count > 0:
             print(f'FPS: {1/(middle_processing_time/middle_processing_count)}')
@@ -1260,6 +1277,19 @@ class SAM2VideoPredictor(SAM2Base):
             "object_score_logits": object_score_logits,
             "iou": iou,
         }
+        attention_map = current_out.get("vqa_attention_map")
+        if attention_map is not None:
+            attention_map = attention_map.unsqueeze(1)
+            attention_map = F.interpolate(
+                attention_map,
+                size=(self.image_size, self.image_size),
+                mode="bilinear",
+                align_corners=False,
+            )
+            attention_map = attention_map.squeeze(1)
+            attention_map = attention_map.to(storage_device, non_blocking=True)
+            compact_current_out["vqa_attention_map"] = attention_map
+
         return compact_current_out, pred_masks_gpu, current_vision_feats, current_vision_pos_embeds
 
     def _run_single_frame_inference(

@@ -847,7 +847,7 @@ class SAM2Base(torch.nn.Module):
         # Add text embedding, text input has the highest priority
         if run_referring:
             # Get the features after text and image feature activation
-            fusion_image_embeddings, text_cls_tokens = self.cross_modal_fusion(
+            fusion_image_embeddings, text_cls_tokens, attention_map = self.cross_modal_fusion(
                 image_embeddings=current_vision_feats,
                 image_pe=current_vision_pos_embeds,
                 text_embeddings=text_emb_inputs["text_emb_sentence"],
@@ -879,7 +879,7 @@ class SAM2Base(torch.nn.Module):
                 high_res_features=high_res_features,
                 multimask_output=multimask_output,
             )
-            pass
+            current_out["vqa_attention_map"] = attention_map
         elif mask_inputs is not None and self.use_mask_input_as_output_without_sam:
             # When use_mask_input_as_output_without_sam=True, we directly output the mask input
             # (see it as a GT mask) without using a SAM prompt encoder + mask decoder.
