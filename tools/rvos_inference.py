@@ -144,6 +144,27 @@ def save_masks_to_dir(
             save_ann_png(output_mask_path, output_mask, output_palette)
 
 
+def save_attention_overlay(base_image_path, attention_map, save_path, alpha=0.6):
+    """Overlay an attention heatmap on the base image and save it."""
+    if isinstance(attention_map, torch.Tensor):
+        attention_map = attention_map.detach().cpu().numpy()
+    if attention_map.ndim == 3:
+        attention_map = attention_map[0]
+    attention_map = attention_map.astype(np.float32)
+    if attention_map.max() > 0:
+        attention_map = attention_map / attention_map.max()
+    base_image = Image.open(base_image_path).convert("RGB")
+    attn_image = Image.fromarray((attention_map * 255).astype(np.uint8), mode="L")
+    attn_image = attn_image.resize(base_image.size, resample=Image.BILINEAR)
+    attn_array = np.asarray(attn_image, dtype=np.float32) / 255.0
+    base_array = np.asarray(base_image, dtype=np.float32) / 255.0
+    overlay = base_array * (1 - attn_array[..., None] * alpha) + np.array(
+        [1.0, 0.0, 0.0], dtype=np.float32
+    )[None, None, :] * (attn_array[..., None] * alpha)
+    overlay = np.clip(overlay * 255.0, 0, 255).astype(np.uint8)
+    Image.fromarray(overlay).save(save_path)
+
+
 @torch.inference_mode()
 @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
 def rvos_inference(
@@ -156,6 +177,7 @@ def rvos_inference(
     read_frame_interval=1,
     save_frame_interval=1,
     ref_dataset=True,
+    output_attention_dir=None,
 ):
     """
     Run VOS inference on a single video with the given predictor.
@@ -168,13 +190,14 @@ def rvos_inference(
     # load the video frames and initialize the inference state on this video
     assert ref_dataset, "This function is only for reference datasets"
     video_dir = os.path.join(base_video_dir, video_name)
-    all_frame_names = [
-        os.path.splitext(p)[0]
-        for p in os.listdir(video_dir)
-        if os.path.splitext(p)[-1] in [".jpg", ".jpeg", ".JPG", ".JPEG", '.png']
-    ]
+    frame_file_map = {}
+    for p in os.listdir(video_dir):
+        frame_root, frame_ext = os.path.splitext(p)
+        if frame_ext in [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG"]:
+            frame_file_map[frame_root] = p
+    all_frame_names = list(frame_file_map.keys())
     # only process frames with frame_interval
-    frame_names = [p for p in all_frame_names if int(os.path.splitext(p)[0]) % read_frame_interval == 0]
+    frame_names = [p for p in all_frame_names if int(p) % read_frame_interval == 0]
     # save_pred_freq = len(all_frame_names) // len(frame_names)
     frame_names.sort(key=lambda p: int(os.path.splitext(p)[0]))
     inference_state = predictor.init_state(
@@ -196,6 +219,7 @@ def rvos_inference(
     # for object_id in latter_frame_object_ids:
     object_ids = sorted(inputs_per_object)
     output_scores_per_object = defaultdict(dict)
+    attention_maps_per_object = defaultdict(dict)
     predictor.reset_state(inference_state)
     for object_id in object_ids:
         predictor.add_new_text(
@@ -205,15 +229,20 @@ def rvos_inference(
             text=inputs_per_object[object_id][0],
         )
     # run propagation throughout the video and collect the results in a dict
-    for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(
+    for out_frame_idx, out_obj_ids, out_mask_logits, out_attention_maps in predictor.propagate_in_video(
         inference_state,
         start_frame_idx=0,
         reverse=False,
     ):
         # obj_scores = out_mask_logits.cpu().numpy()
         obj_scores = out_mask_logits
+        attention_tensor = out_attention_maps
         for i, out_obj_id in enumerate(out_obj_ids):
             output_scores_per_object[out_obj_id][out_frame_idx] = obj_scores[i: i + 1]
+            if attention_tensor is not None:
+                attention_maps_per_object[out_obj_id][out_frame_idx] = attention_tensor[
+                    i: i + 1
+                ].detach().cpu()
 
     video_segments = {}
     for out_frame_idx in range(len(frame_names)):
@@ -263,6 +292,25 @@ def rvos_inference(
             for i, object_id in enumerate(object_ids)
         }
         video_segments[frame_idx] = per_obj_output_mask
+
+    if output_attention_dir is not None:
+        for frame_idx in range(len(frame_names)):
+            frame_time = int(frame_names[frame_idx])
+            if frame_time % save_frame_interval != 0:
+                continue
+            frame_name = frame_names[frame_idx]
+            frame_file = frame_file_map.get(frame_name)
+            if frame_file is None:
+                continue
+            base_image_path = os.path.join(video_dir, frame_file)
+            for object_id in object_ids:
+                attention_map = attention_maps_per_object[object_id].get(frame_idx)
+                if attention_map is None:
+                    continue
+                save_dir = os.path.join(output_attention_dir, video_name, f"{object_id:03d}")
+                os.makedirs(save_dir, exist_ok=True)
+                save_path = os.path.join(save_dir, f"{frame_name}.png")
+                save_attention_overlay(base_image_path, attention_map, save_path)
 
     # write the output masks as palette PNG files to output_mask_dir
     for frame_idx, per_obj_output_mask in video_segments.items():
@@ -326,6 +374,12 @@ def main():
         type=str,
         required=True,
         help="directory to save the output masks (as PNG files)",
+    )
+    parser.add_argument(
+        "--output_attention_dir",
+        type=str,
+        default=None,
+        help="directory to save attention overlays highlighting VQA focus regions",
     )
     parser.add_argument(
         "--score_thresh",
@@ -428,6 +482,7 @@ def main():
             score_thresh=args.score_thresh,
             read_frame_interval=args.read_frame_interval,
             save_frame_interval=args.save_frame_interval,
+            output_attention_dir=args.output_attention_dir,
         )
 
     print(

@@ -369,7 +369,7 @@ class SAM2Train(SAM2Base):
             previous_ref_feats_list = [[last_layer_feat[:, i:i+1]] for i in range(1, T)]
             previous_ref_pos_embeds_list = [[last_layer_pos_embeds[:, i:i+1]] for i in range(1, T)]
 
-            fusion_image_embeddings, text_cls_tokens = self.cross_modal_fusion(
+            fusion_image_embeddings, text_cls_tokens, _ = self.cross_modal_fusion(
                 image_embeddings=image_embeddings,
                 image_pe=image_pos_embeds,
                 text_embeddings=obj_text_emb_inputs,

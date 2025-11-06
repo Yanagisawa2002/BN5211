@@ -138,12 +138,24 @@ class CrossModalFusionModule(nn.Module):
         text_embeddings = hs  # (B, N, C)
         cls_tokens = text_embeddings[:, :1, :]
 
+        with torch.no_grad():
+            batch_size = src.shape[0]
+            feat_dim = src.shape[-1]
+            fused_src = src.view(batch_size, f, h * w, feat_dim)
+            current_frame_feats = fused_src[:, 0]
+            cls_vector = cls_tokens[:, 0, :]
+            attention_scores = torch.einsum("bc,bhc->bh", cls_vector, current_frame_feats)
+            attention_map = attention_scores.view(batch_size, h, w)
+            attention_map = attention_map - attention_map.amin(dim=(1, 2), keepdim=True)
+            attention_denominator = attention_map.amax(dim=(1, 2), keepdim=True).clamp_min(1e-6)
+            attention_map = attention_map / attention_denominator
+
         image_embeddings = image_embeddings.reshape(-1, f, h*w, c).permute(1, 2, 0, 3)
 
         if not return_intermediate:
             image_embeddings = image_embeddings[0]  # (f, h*w, b, c)
 
-        return image_embeddings, cls_tokens
+        return image_embeddings, cls_tokens, attention_map
 
 
 class TwoWayTokenTransformer(nn.Module):
